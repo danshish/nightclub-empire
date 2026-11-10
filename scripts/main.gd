@@ -1,0 +1,250 @@
+extends Node3D
+
+const SAVE_PATH := "user://nightclub_empire_save.json"
+
+var cash: float = 250.0
+var reputation: int = 1
+var satisfaction: int = 75
+var dance_level: int = 1
+var bar_level: int = 1
+var vip_level: int = 0
+var club_open := true
+var elapsed := 0.0
+var customers: Array[Node3D] = []
+var hud: CanvasLayer
+var cash_label: Label
+var stats_label: Label
+var status_label: Label
+var buttons: Dictionary = {}
+
+func _ready() -> void:
+	_load_game()
+	_build_world()
+	_build_hud()
+	_update_hud()
+	set_process(true)
+
+func _process(delta: float) -> void:
+	elapsed += delta
+	if club_open and elapsed >= 1.0:
+		elapsed = 0.0
+		var visitors := 2 + reputation + dance_level
+		cash += float(visitors) * (1.0 + float(bar_level) * 0.6 + float(vip_level) * 1.2)
+		satisfaction = clampi(satisfaction + (1 if satisfaction < 95 else 0), 0, 100)
+		_update_hud()
+	for i in range(customers.size()):
+		var person := customers[i]
+		if is_instance_valid(person):
+			var phase := elapsed * 2.0 + float(i) * 1.7
+			person.position.y = 0.55 + absf(sin(phase)) * 0.12
+			person.rotation.y += delta * 0.45
+
+func _build_world() -> void:
+	var world_env := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.035, 0.025, 0.09)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.65, 0.62, 0.9)
+	env.ambient_light_energy = 0.8
+	world_env.environment = env
+	add_child(world_env)
+
+	var camera := Camera3D.new()
+	camera.position = Vector3(11, 13, 15)
+	camera.look_at(Vector3(0, 0.4, 0))
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.size = 18.5
+	add_child(camera)
+	camera.current = true
+
+	_add_box("ClubFloor", Vector3(0, -0.22, 0), Vector3(12, 0.4, 10), Color(0.12, 0.09, 0.22))
+	_add_box("BackWall", Vector3(0, 1.5, -5), Vector3(12, 3.2, 0.25), Color(0.15, 0.08, 0.3))
+	_add_box("LeftWall", Vector3(-6, 1.5, 0), Vector3(0.25, 3.2, 10), Color(0.12, 0.07, 0.25))
+	_add_box("DanceFloor", Vector3(-1.2, 0.02, 0.2), Vector3(5.5, 0.12, 4.8), Color(0.12, 0.28, 0.55))
+	_add_box("DJStage", Vector3(-1.2, 0.48, -3.2), Vector3(3.7, 0.9, 1.1), Color(0.35, 0.08, 0.48))
+	_add_box("DJConsole", Vector3(-1.2, 1.1, -3.0), Vector3(2.4, 0.35, 0.55), Color(0.08, 0.08, 0.16))
+	_add_box("BarCounter", Vector3(3.5, 0.55, -2.2), Vector3(3.4, 1.1, 1.1), Color(0.42, 0.16, 0.22))
+	_add_box("BarTop", Vector3(3.5, 1.15, -2.2), Vector3(3.6, 0.16, 1.25), Color(0.95, 0.42, 0.7))
+	_add_box("VIPPlatform", Vector3(3.2, 0.18, 2.8), Vector3(4.3, 0.35, 2.5), Color(0.28, 0.13, 0.38))
+	_add_box("VIPSofa", Vector3(3.2, 0.65, 2.8), Vector3(2.8, 0.65, 0.75), Color(0.65, 0.2, 0.38))
+	for x in [-4.0, -2.0, 0.0, 2.0, 4.0]:
+		_add_box("NeonStrip", Vector3(x, 0.12, -4.65), Vector3(0.08, 0.06, 0.35), Color(0.1, 0.9, 1.0), true)
+	for i in range(8):
+		_spawn_customer(Vector3(-3.2 + float(i % 4) * 1.3, 0.55, -0.8 + float(i / 4) * 1.5))
+	_add_light(Vector3(-1, 4, -2), Color(0.3, 0.25, 1.0), 5.0)
+	_add_light(Vector3(3, 3, 1), Color(1.0, 0.15, 0.55), 4.0)
+	_add_light(Vector3(-4, 3, 2), Color(0.1, 0.75, 1.0), 3.5)
+
+func _material(color: Color, emission := false) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	if emission:
+		mat.emission_enabled = true
+		mat.emission = color
+		mat.emission_energy_multiplier = 1.8
+	return mat
+
+func _add_box(label: String, pos: Vector3, size: Vector3, color: Color, glow := false) -> MeshInstance3D:
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	var instance := MeshInstance3D.new()
+	instance.name = label
+	instance.mesh = mesh
+	instance.position = pos
+	instance.material_override = _material(color, glow)
+	add_child(instance)
+	return instance
+
+func _spawn_customer(pos: Vector3) -> void:
+	var person := Node3D.new()
+	person.position = pos
+	add_child(person)
+	var body := MeshInstance3D.new()
+	var capsule := CapsuleMesh.new()
+	capsule.radius = 0.22
+	capsule.height = 0.8
+	body.mesh = capsule
+	var palette := [Color(1.0, 0.35, 0.55), Color(0.25, 0.8, 1.0), Color(1.0, 0.7, 0.2), Color(0.55, 0.9, 0.45)]
+	body.material_override = _material(palette[customers.size() % palette.size()])
+	person.add_child(body)
+	var head := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.2
+	sphere.height = 0.4
+	head.mesh = sphere
+	head.position.y = 0.48
+	head.material_override = _material(Color(1.0, 0.75, 0.58))
+	person.add_child(head)
+	customers.append(person)
+
+func _add_light(pos: Vector3, color: Color, energy: float) -> void:
+	var light := OmniLight3D.new()
+	light.position = pos
+	light.light_color = color
+	light.light_energy = energy
+	light.omni_range = 9.0
+	add_child(light)
+
+func _build_hud() -> void:
+	hud = CanvasLayer.new()
+	add_child(hud)
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hud.add_child(root)
+
+	var title := Label.new()
+	title.text = "NIGHTCLUB EMPIRE"
+	title.position = Vector2(22, 24)
+	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_color_override("font_color", Color(1.0, 0.55, 0.85))
+	root.add_child(title)
+
+	cash_label = Label.new()
+	cash_label.position = Vector2(24, 70)
+	cash_label.add_theme_font_size_override("font_size", 25)
+	root.add_child(cash_label)
+
+	stats_label = Label.new()
+	stats_label.position = Vector2(24, 108)
+	stats_label.add_theme_font_size_override("font_size", 17)
+	stats_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
+	root.add_child(stats_label)
+
+	status_label = Label.new()
+	status_label.position = Vector2(24, 152)
+	status_label.add_theme_font_size_override("font_size", 16)
+	status_label.add_theme_color_override("font_color", Color(0.5, 1.0, 0.75))
+	root.add_child(status_label)
+
+	var panel := VBoxContainer.new()
+	panel.position = Vector2(18, 900)
+	panel.size = Vector2(684, 330)
+	panel.add_theme_constant_override("separation", 9)
+	root.add_child(panel)
+	_add_button(panel, "UPGRADE DANCE FLOOR", "dance")
+	_add_button(panel, "UPGRADE BAR", "bar")
+	_add_button(panel, "UNLOCK VIP LOUNGE", "vip")
+	_add_button(panel, "OPEN / CLOSE CLUB", "toggle")
+	_add_button(panel, "SAVE GAME", "save")
+
+func _add_button(parent: VBoxContainer, caption: String, action: String) -> void:
+	var button := Button.new()
+	button.text = caption
+	button.custom_minimum_size = Vector2(0, 54)
+	button.add_theme_font_size_override("font_size", 19)
+	button.add_theme_color_override("font_color", Color.WHITE)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.32, 0.12, 0.48)
+	style.set_corner_radius_all(12)
+	button.add_theme_stylebox_override("normal", style)
+	var hover := style.duplicate()
+	hover.bg_color = Color(0.55, 0.16, 0.55)
+	button.add_theme_stylebox_override("hover", hover)
+	button.pressed.connect(_on_action.bind(action))
+	parent.add_child(button)
+
+func _on_action(action: String) -> void:
+	match action:
+		"dance":
+			var cost := 100 + dance_level * 125
+			if cash >= cost:
+				cash -= cost
+				dance_level += 1
+				reputation += 1
+				_add_box("DanceUpgrade" + str(dance_level), Vector3(-1.2, 0.12, 0.2), Vector3(5.5, 0.08, 4.8), Color(0.2, 0.35, 0.8))
+		"bar":
+			var cost := 150 + bar_level * 175
+			if cash >= cost:
+				cash -= cost
+				bar_level += 1
+				satisfaction = mini(100, satisfaction + 5)
+				_add_box("BarUpgrade" + str(bar_level), Vector3(3.5, 1.25 + float(bar_level) * 0.05, -2.2), Vector3(3.6, 0.12, 1.25), Color(0.95, 0.35, 0.65))
+		"vip":
+			var cost := 500 + vip_level * 400
+			if cash >= cost:
+				cash -= cost
+				vip_level += 1
+				reputation += 2
+				_add_box("VIPUpgrade" + str(vip_level), Vector3(3.2, 0.95 + float(vip_level) * 0.08, 2.8), Vector3(2.8, 0.18, 0.75), Color(0.85, 0.55, 0.25))
+		"toggle":
+			club_open = not club_open
+		"save":
+			_save_game()
+	_update_hud()
+
+func _update_hud() -> void:
+	if not is_instance_valid(cash_label):
+		return
+	cash_label.text = "CASH  $" + str(int(cash))
+	stats_label.text = "REPUTATION  " + str(reputation) + "     HAPPINESS  " + str(satisfaction) + "%"
+	status_label.text = ("● CLUB OPEN  •  EARNING MONEY" if club_open else "● CLUB CLOSED  •  INCOME PAUSED")
+	if is_instance_valid(buttons.get("dance")):
+		pass
+
+func _save_game() -> void:
+	var data := {
+		"cash": cash, "reputation": reputation, "satisfaction": satisfaction,
+		"dance_level": dance_level, "bar_level": bar_level, "vip_level": vip_level,
+		"club_open": club_open
+	}
+	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(data))
+	status_label.text = "GAME SAVED"
+
+func _load_game() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return
+	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if not file:
+		return
+	var parsed = JSON.parse_string(file.get_as_text())
+	if typeof(parsed) == TYPE_DICTIONARY:
+		cash = float(parsed.get("cash", cash))
+		reputation = int(parsed.get("reputation", reputation))
+		satisfaction = int(parsed.get("satisfaction", satisfaction))
+		dance_level = int(parsed.get("dance_level", dance_level))
+		bar_level = int(parsed.get("bar_level", bar_level))
+		vip_level = int(parsed.get("vip_level", vip_level))
+		club_open = bool(parsed.get("club_open", club_open))
